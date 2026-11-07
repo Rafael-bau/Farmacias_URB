@@ -1,0 +1,656 @@
+-- =========================================================================
+-- FARMACIAS URB - ESQUEMA v2 + CRUD (MySQL 8.0.16+)
+-- Empresa: TecNova Software Solutions S.A. de C.V.
+-- Los datos reales los captura el usuario desde la aplicación. Al final del archivo
+-- hay una sección de DATOS DE PRUEBA que puedes omitir en producción.
+-- Lectura (listados/búsquedas): la app usa SELECT directo sobre tablas/vistas.
+-- Escritura (alta/cambio/baja): la app usa los procedimientos sp_*.
+-- =========================================================================
+
+CREATE DATABASE IF NOT EXISTS farmacias_urb
+    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE farmacias_urb;
+SET NAMES utf8mb4;  -- guardar este archivo como UTF-8 para conservar acentos
+
+-- ============================ TABLAS ====================================
+
+CREATE TABLE IF NOT EXISTS roles (
+    id_rol INT AUTO_INCREMENT PRIMARY KEY,
+    nombre_rol VARCHAR(30) NOT NULL UNIQUE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS usuarios (
+    id_usuario INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    correo VARCHAR(100) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    id_rol INT NOT NULL,
+    estatus BOOLEAN NOT NULL DEFAULT TRUE,
+    fecha_creacion DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_usuario_rol FOREIGN KEY (id_rol) REFERENCES roles(id_rol)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS categorias (
+    id_categoria INT AUTO_INCREMENT PRIMARY KEY,
+    nombre_categoria VARCHAR(50) NOT NULL UNIQUE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS medicamentos (
+    id_medicamento INT AUTO_INCREMENT PRIMARY KEY,
+    codigo_barras VARCHAR(50) NOT NULL UNIQUE,
+    nombre_comercial VARCHAR(100) NOT NULL,
+    sustancia_activa VARCHAR(100) NOT NULL,
+    precio_venta DECIMAL(10,2) NOT NULL,
+    stock_minimo INT NOT NULL DEFAULT 5,
+    id_categoria INT NOT NULL,
+    estatus BOOLEAN NOT NULL DEFAULT TRUE,
+    CONSTRAINT chk_med_precio CHECK (precio_venta > 0),
+    CONSTRAINT chk_med_stock_min CHECK (stock_minimo >= 0),
+    CONSTRAINT fk_medicamento_categoria FOREIGN KEY (id_categoria) REFERENCES categorias(id_categoria)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    INDEX idx_med_nombre (nombre_comercial),
+    INDEX idx_med_sustancia (sustancia_activa)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS lotes (
+    id_lote INT AUTO_INCREMENT PRIMARY KEY,
+    num_lote VARCHAR(50) NOT NULL,
+    fecha_caducidad DATE NOT NULL,
+    stock_actual INT NOT NULL DEFAULT 0,
+    id_medicamento INT NOT NULL,
+    CONSTRAINT chk_lote_stock CHECK (stock_actual >= 0),
+    CONSTRAINT uq_lote_medicamento UNIQUE (id_medicamento, num_lote),
+    CONSTRAINT fk_lote_medicamento FOREIGN KEY (id_medicamento) REFERENCES medicamentos(id_medicamento)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    INDEX idx_lote_caducidad (fecha_caducidad)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS clientes (
+    id_cliente INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    telefono VARCHAR(15) NOT NULL UNIQUE,
+    correo VARCHAR(100) NOT NULL UNIQUE,
+    puntos_acumulados INT NOT NULL DEFAULT 0,
+    fecha_registro DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_cliente_puntos CHECK (puntos_acumulados >= 0)
+) ENGINE=InnoDB;
+
+-- estatus_venta: las ventas NO se borran, se cancelan (conserva auditoría)
+CREATE TABLE IF NOT EXISTS ventas (
+    id_venta INT AUTO_INCREMENT PRIMARY KEY,
+    folio_ticket VARCHAR(20) NOT NULL UNIQUE,
+    fecha_venta DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    subtotal DECIMAL(10,2) NOT NULL,
+    iva DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    total DECIMAL(10,2) NOT NULL,
+    metodo_pago ENUM('EFECTIVO','TARJETA','TRANSFERENCIA') NOT NULL,
+    puntos_generados INT NOT NULL DEFAULT 0,
+    estatus_venta ENUM('COMPLETADA','CANCELADA') NOT NULL DEFAULT 'COMPLETADA',
+    id_usuario INT NOT NULL,
+    id_cliente INT NULL,
+    CONSTRAINT chk_venta_montos CHECK (subtotal >= 0 AND iva >= 0 AND total = subtotal + iva),
+    CONSTRAINT chk_venta_puntos CHECK (puntos_generados >= 0),
+    CONSTRAINT fk_venta_usuario FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_venta_cliente FOREIGN KEY (id_cliente) REFERENCES clientes(id_cliente)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    INDEX idx_venta_fecha (fecha_venta)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS detalle_ventas (
+    id_detalle INT AUTO_INCREMENT PRIMARY KEY,
+    id_venta INT NOT NULL,
+    id_lote INT NOT NULL,
+    cantidad INT NOT NULL,
+    precio_unitario DECIMAL(10,2) NOT NULL,
+    subtotal_linea DECIMAL(10,2) NOT NULL,
+    CONSTRAINT chk_det_cantidad CHECK (cantidad > 0),
+    CONSTRAINT chk_det_subtotal CHECK (subtotal_linea = cantidad * precio_unitario),
+    CONSTRAINT uq_det_venta_lote UNIQUE (id_venta, id_lote),
+    CONSTRAINT fk_detalle_venta FOREIGN KEY (id_venta) REFERENCES ventas(id_venta)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_detalle_lote FOREIGN KEY (id_lote) REFERENCES lotes(id_lote)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- ============================ TRIGGERS ==================================
+DELIMITER $$
+
+DROP TRIGGER IF EXISTS trg_detalle_before_insert$$
+CREATE TRIGGER trg_detalle_before_insert
+BEFORE INSERT ON detalle_ventas
+FOR EACH ROW
+BEGIN
+    DECLARE v_stock INT;
+    DECLARE v_cad DATE;
+    SELECT stock_actual, fecha_caducidad INTO v_stock, v_cad
+      FROM lotes WHERE id_lote = NEW.id_lote FOR UPDATE;
+    IF v_cad < CURDATE() THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Lote caducado: no se puede vender';
+    END IF;
+    IF v_stock < NEW.cantidad THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Stock insuficiente en el lote';
+    END IF;
+END$$
+
+DROP TRIGGER IF EXISTS trg_detalle_after_insert$$
+CREATE TRIGGER trg_detalle_after_insert
+AFTER INSERT ON detalle_ventas
+FOR EACH ROW
+BEGIN
+    UPDATE lotes SET stock_actual = stock_actual - NEW.cantidad
+     WHERE id_lote = NEW.id_lote;
+END$$
+
+DROP TRIGGER IF EXISTS trg_venta_after_insert$$
+CREATE TRIGGER trg_venta_after_insert
+AFTER INSERT ON ventas
+FOR EACH ROW
+BEGIN
+    IF NEW.id_cliente IS NOT NULL AND NEW.puntos_generados > 0 THEN
+        UPDATE clientes SET puntos_acumulados = puntos_acumulados + NEW.puntos_generados
+         WHERE id_cliente = NEW.id_cliente;
+    END IF;
+END$$
+
+-- ====================== CRUD: ROLES =====================================
+DROP PROCEDURE IF EXISTS sp_rol_crear$$
+CREATE PROCEDURE sp_rol_crear(IN p_nombre VARCHAR(30))
+BEGIN
+    DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ya existe un rol con ese nombre';
+    INSERT INTO roles(nombre_rol) VALUES (TRIM(p_nombre));
+    SELECT LAST_INSERT_ID() AS id_rol;
+END$$
+
+DROP PROCEDURE IF EXISTS sp_rol_actualizar$$
+CREATE PROCEDURE sp_rol_actualizar(IN p_id INT, IN p_nombre VARCHAR(30))
+BEGIN
+    DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ya existe un rol con ese nombre';
+    UPDATE roles SET nombre_rol = TRIM(p_nombre) WHERE id_rol = p_id;
+END$$
+
+DROP PROCEDURE IF EXISTS sp_rol_eliminar$$
+CREATE PROCEDURE sp_rol_eliminar(IN p_id INT)
+BEGIN
+    DECLARE EXIT HANDLER FOR 1451 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: hay usuarios con este rol';
+    DELETE FROM roles WHERE id_rol = p_id;
+END$$
+
+-- ====================== CRUD: USUARIOS ==================================
+-- p_hash: la app debe enviar el hash (bcrypt/argon2), NUNCA la contraseña en texto plano.
+DROP PROCEDURE IF EXISTS sp_usuario_crear$$
+CREATE PROCEDURE sp_usuario_crear(IN p_nombre VARCHAR(100), IN p_correo VARCHAR(100),
+                                  IN p_hash VARCHAR(255), IN p_id_rol INT)
+BEGIN
+    DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ya existe un usuario con ese correo';
+    DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El rol indicado no existe';
+    INSERT INTO usuarios(nombre, correo, password_hash, id_rol)
+    VALUES (TRIM(p_nombre), LOWER(TRIM(p_correo)), p_hash, p_id_rol);
+    SELECT LAST_INSERT_ID() AS id_usuario;
+END$$
+
+DROP PROCEDURE IF EXISTS sp_usuario_actualizar$$
+CREATE PROCEDURE sp_usuario_actualizar(IN p_id INT, IN p_nombre VARCHAR(100),
+                                       IN p_correo VARCHAR(100), IN p_id_rol INT)
+BEGIN
+    DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ya existe un usuario con ese correo';
+    DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El rol indicado no existe';
+    UPDATE usuarios SET nombre = TRIM(p_nombre), correo = LOWER(TRIM(p_correo)), id_rol = p_id_rol
+     WHERE id_usuario = p_id;
+END$$
+
+DROP PROCEDURE IF EXISTS sp_usuario_cambiar_password$$
+CREATE PROCEDURE sp_usuario_cambiar_password(IN p_id INT, IN p_hash VARCHAR(255))
+BEGIN
+    UPDATE usuarios SET password_hash = p_hash WHERE id_usuario = p_id;
+END$$
+
+-- "Eliminar" = baja lógica (el usuario tiene ventas históricas)
+DROP PROCEDURE IF EXISTS sp_usuario_estatus$$
+CREATE PROCEDURE sp_usuario_estatus(IN p_id INT, IN p_estatus BOOLEAN)
+BEGIN
+    UPDATE usuarios SET estatus = p_estatus WHERE id_usuario = p_id;
+END$$
+
+-- ====================== CRUD: CATEGORÍAS ================================
+DROP PROCEDURE IF EXISTS sp_categoria_crear$$
+CREATE PROCEDURE sp_categoria_crear(IN p_nombre VARCHAR(50))
+BEGIN
+    DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ya existe una categoría con ese nombre';
+    INSERT INTO categorias(nombre_categoria) VALUES (TRIM(p_nombre));
+    SELECT LAST_INSERT_ID() AS id_categoria;
+END$$
+
+DROP PROCEDURE IF EXISTS sp_categoria_actualizar$$
+CREATE PROCEDURE sp_categoria_actualizar(IN p_id INT, IN p_nombre VARCHAR(50))
+BEGIN
+    DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ya existe una categoría con ese nombre';
+    UPDATE categorias SET nombre_categoria = TRIM(p_nombre) WHERE id_categoria = p_id;
+END$$
+
+DROP PROCEDURE IF EXISTS sp_categoria_eliminar$$
+CREATE PROCEDURE sp_categoria_eliminar(IN p_id INT)
+BEGIN
+    DECLARE EXIT HANDLER FOR 1451 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se puede eliminar: hay medicamentos en esta categoría';
+    DELETE FROM categorias WHERE id_categoria = p_id;
+END$$
+
+-- ====================== CRUD: MEDICAMENTOS ==============================
+DROP PROCEDURE IF EXISTS sp_medicamento_crear$$
+CREATE PROCEDURE sp_medicamento_crear(IN p_codigo VARCHAR(50), IN p_nombre VARCHAR(100),
+        IN p_sustancia VARCHAR(100), IN p_precio DECIMAL(10,2), IN p_stock_min INT, IN p_id_categoria INT)
+BEGIN
+    DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ya existe un medicamento con ese código de barras';
+    DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La categoría indicada no existe';
+    DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Precio o stock mínimo inválido';
+    INSERT INTO medicamentos(codigo_barras, nombre_comercial, sustancia_activa, precio_venta, stock_minimo, id_categoria)
+    VALUES (TRIM(p_codigo), TRIM(p_nombre), TRIM(p_sustancia), p_precio, IFNULL(p_stock_min,5), p_id_categoria);
+    SELECT LAST_INSERT_ID() AS id_medicamento;
+END$$
+
+DROP PROCEDURE IF EXISTS sp_medicamento_actualizar$$
+CREATE PROCEDURE sp_medicamento_actualizar(IN p_id INT, IN p_codigo VARCHAR(50), IN p_nombre VARCHAR(100),
+        IN p_sustancia VARCHAR(100), IN p_precio DECIMAL(10,2), IN p_stock_min INT, IN p_id_categoria INT)
+BEGIN
+    DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ya existe un medicamento con ese código de barras';
+    DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La categoría indicada no existe';
+    DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Precio o stock mínimo inválido';
+    UPDATE medicamentos
+       SET codigo_barras = TRIM(p_codigo), nombre_comercial = TRIM(p_nombre),
+           sustancia_activa = TRIM(p_sustancia), precio_venta = p_precio,
+           stock_minimo = p_stock_min, id_categoria = p_id_categoria
+     WHERE id_medicamento = p_id;
+END$$
+
+-- Baja lógica: el medicamento ya pudo venderse
+DROP PROCEDURE IF EXISTS sp_medicamento_estatus$$
+CREATE PROCEDURE sp_medicamento_estatus(IN p_id INT, IN p_estatus BOOLEAN)
+BEGIN
+    UPDATE medicamentos SET estatus = p_estatus WHERE id_medicamento = p_id;
+END$$
+
+-- ====================== CRUD: LOTES =====================================
+DROP PROCEDURE IF EXISTS sp_lote_crear$$
+CREATE PROCEDURE sp_lote_crear(IN p_id_medicamento INT, IN p_num_lote VARCHAR(50),
+                               IN p_caducidad DATE, IN p_stock INT)
+BEGIN
+    DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ese número de lote ya existe para el medicamento';
+    DECLARE EXIT HANDLER FOR 1452 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El medicamento indicado no existe';
+    DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El stock no puede ser negativo';
+    INSERT INTO lotes(id_medicamento, num_lote, fecha_caducidad, stock_actual)
+    VALUES (p_id_medicamento, TRIM(p_num_lote), p_caducidad, p_stock);
+    SELECT LAST_INSERT_ID() AS id_lote;
+END$$
+
+-- Permite corregir datos o ajustar stock por conteo físico
+DROP PROCEDURE IF EXISTS sp_lote_actualizar$$
+CREATE PROCEDURE sp_lote_actualizar(IN p_id INT, IN p_num_lote VARCHAR(50),
+                                    IN p_caducidad DATE, IN p_stock INT)
+BEGIN
+    DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ese número de lote ya existe para el medicamento';
+    DECLARE EXIT HANDLER FOR 3819 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El stock no puede ser negativo';
+    UPDATE lotes SET num_lote = TRIM(p_num_lote), fecha_caducidad = p_caducidad, stock_actual = p_stock
+     WHERE id_lote = p_id;
+END$$
+
+-- Solo se elimina si nunca se vendió; si ya tiene ventas, ajustar stock a 0
+DROP PROCEDURE IF EXISTS sp_lote_eliminar$$
+CREATE PROCEDURE sp_lote_eliminar(IN p_id INT)
+BEGIN
+    DECLARE EXIT HANDLER FOR 1451 SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'No se puede eliminar: el lote tiene ventas. Ajuste su stock a 0';
+    DELETE FROM lotes WHERE id_lote = p_id;
+END$$
+
+-- ====================== CRUD: CLIENTES ==================================
+DROP PROCEDURE IF EXISTS sp_cliente_crear$$
+CREATE PROCEDURE sp_cliente_crear(IN p_nombre VARCHAR(100), IN p_telefono VARCHAR(15), IN p_correo VARCHAR(100))
+BEGIN
+    DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ya existe un cliente con ese teléfono o correo';
+    INSERT INTO clientes(nombre, telefono, correo)
+    VALUES (TRIM(p_nombre), TRIM(p_telefono), LOWER(TRIM(p_correo)));
+    SELECT LAST_INSERT_ID() AS id_cliente;
+END$$
+
+DROP PROCEDURE IF EXISTS sp_cliente_actualizar$$
+CREATE PROCEDURE sp_cliente_actualizar(IN p_id INT, IN p_nombre VARCHAR(100),
+                                       IN p_telefono VARCHAR(15), IN p_correo VARCHAR(100))
+BEGIN
+    DECLARE EXIT HANDLER FOR 1062 SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ya existe un cliente con ese teléfono o correo';
+    UPDATE clientes SET nombre = TRIM(p_nombre), telefono = TRIM(p_telefono), correo = LOWER(TRIM(p_correo))
+     WHERE id_cliente = p_id;
+END$$
+
+-- Las ventas del cliente se conservan (id_cliente pasa a NULL)
+DROP PROCEDURE IF EXISTS sp_cliente_eliminar$$
+CREATE PROCEDURE sp_cliente_eliminar(IN p_id INT)
+BEGIN
+    DELETE FROM clientes WHERE id_cliente = p_id;
+END$$
+
+-- ====================== VENTAS (transaccional) ==========================
+-- p_items ejemplo: '[{"id_lote":3,"cantidad":2},{"id_lote":8,"cantidad":1}]'
+-- p_tasa_iva: 0.00 para medicamentos con tasa 0%, 0.16 si aplica IVA
+-- Regla de puntos: 1 punto por cada $10 del total (ajustable aquí)
+DROP PROCEDURE IF EXISTS sp_registrar_venta$$
+CREATE PROCEDURE sp_registrar_venta(IN p_id_usuario INT, IN p_id_cliente INT,
+        IN p_metodo_pago VARCHAR(20), IN p_tasa_iva DECIMAL(4,2), IN p_items JSON)
+BEGIN
+    DECLARE v_subtotal DECIMAL(10,2);
+    DECLARE v_iva DECIMAL(10,2);
+    DECLARE v_total DECIMAL(10,2);
+    DECLARE v_puntos INT DEFAULT 0;
+    DECLARE v_id INT;
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        DROP TEMPORARY TABLE IF EXISTS tmp_items;
+        RESIGNAL;
+    END;
+
+    IF p_items IS NULL OR JSON_LENGTH(p_items) = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La venta no tiene productos';
+    END IF;
+
+    START TRANSACTION;
+
+    -- Tabla temporal: evita leer de `lotes` en el mismo INSERT cuyo trigger la modifica (error 1442)
+    DROP TEMPORARY TABLE IF EXISTS tmp_items;
+    CREATE TEMPORARY TABLE tmp_items (
+        id_lote INT PRIMARY KEY,
+        cantidad INT NOT NULL,
+        precio DECIMAL(10,2) NOT NULL
+    );
+
+    INSERT INTO tmp_items(id_lote, cantidad, precio)
+    SELECT j.id_lote, j.cantidad, m.precio_venta
+      FROM JSON_TABLE(p_items, '$[*]' COLUMNS (
+               id_lote INT PATH '$.id_lote', cantidad INT PATH '$.cantidad')) j
+      JOIN lotes l ON l.id_lote = j.id_lote
+      JOIN medicamentos m ON m.id_medicamento = l.id_medicamento
+     WHERE m.estatus = TRUE;
+
+    IF (SELECT COUNT(*) FROM tmp_items) <> JSON_LENGTH(p_items) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Productos inválidos, inactivos o repetidos en la venta';
+    END IF;
+
+    SELECT IFNULL(SUM(cantidad * precio), 0) INTO v_subtotal FROM tmp_items;
+
+    IF v_subtotal <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Productos inválidos o inactivos';
+    END IF;
+
+    SET v_iva    = ROUND(v_subtotal * IFNULL(p_tasa_iva, 0), 2);
+    SET v_total  = v_subtotal + v_iva;
+    IF p_id_cliente IS NOT NULL THEN SET v_puntos = FLOOR(v_total / 10); END IF;
+
+    -- Folio temporal único; se reemplaza por el definitivo con el id generado
+    INSERT INTO ventas(folio_ticket, subtotal, iva, total, metodo_pago, puntos_generados, id_usuario, id_cliente)
+    VALUES (LEFT(UUID(), 20), v_subtotal, v_iva, v_total, p_metodo_pago, v_puntos, p_id_usuario, p_id_cliente);
+    SET v_id = LAST_INSERT_ID();
+
+    UPDATE ventas
+       SET folio_ticket = CONCAT('V', DATE_FORMAT(NOW(), '%y%m%d'), LPAD(v_id, 6, '0'))
+     WHERE id_venta = v_id;
+
+    -- Los triggers validan stock/caducidad y descuentan inventario
+    INSERT INTO detalle_ventas(id_venta, id_lote, cantidad, precio_unitario, subtotal_linea)
+    SELECT v_id, id_lote, cantidad, precio, cantidad * precio
+      FROM tmp_items;
+
+    DROP TEMPORARY TABLE IF EXISTS tmp_items;
+    COMMIT;
+    SELECT v_id AS id_venta,
+           (SELECT folio_ticket FROM ventas WHERE id_venta = v_id) AS folio_ticket,
+           v_total AS total, v_puntos AS puntos_generados;
+END$$
+
+-- Cancelación: devuelve stock y revierte puntos; conserva el historial
+DROP PROCEDURE IF EXISTS sp_cancelar_venta$$
+CREATE PROCEDURE sp_cancelar_venta(IN p_id_venta INT)
+BEGIN
+    DECLARE v_estatus VARCHAR(20);
+    DECLARE v_cliente INT;
+    DECLARE v_puntos INT;
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    START TRANSACTION;
+
+    SELECT estatus_venta, id_cliente, puntos_generados
+      INTO v_estatus, v_cliente, v_puntos
+      FROM ventas WHERE id_venta = p_id_venta FOR UPDATE;
+
+    IF v_estatus IS NULL THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La venta no existe';
+    ELSEIF v_estatus = 'CANCELADA' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La venta ya estaba cancelada';
+    END IF;
+
+    UPDATE lotes l
+      JOIN detalle_ventas d ON d.id_lote = l.id_lote
+       SET l.stock_actual = l.stock_actual + d.cantidad
+     WHERE d.id_venta = p_id_venta;
+
+    IF v_cliente IS NOT NULL THEN
+        UPDATE clientes SET puntos_acumulados = GREATEST(0, puntos_acumulados - v_puntos)
+         WHERE id_cliente = v_cliente;
+    END IF;
+
+    UPDATE ventas SET estatus_venta = 'CANCELADA' WHERE id_venta = p_id_venta;
+    COMMIT;
+END$$
+
+DELIMITER ;
+
+-- ============================ VISTAS ====================================
+CREATE OR REPLACE VIEW v_alerta_caducidad AS
+SELECT
+    m.id_medicamento, m.nombre_comercial, l.id_lote, l.num_lote,
+    l.fecha_caducidad, l.stock_actual,
+    DATEDIFF(l.fecha_caducidad, CURDATE()) AS dias_restantes,
+    CASE WHEN l.fecha_caducidad < CURDATE() THEN 'CADUCADO' ELSE 'POR CADUCAR' END AS estado
+FROM lotes l
+JOIN medicamentos m ON l.id_medicamento = m.id_medicamento
+WHERE l.fecha_caducidad <= DATE_ADD(CURDATE(), INTERVAL 3 MONTH)
+  AND l.stock_actual > 0
+  AND m.estatus = TRUE;
+
+CREATE OR REPLACE VIEW v_alerta_stock_critico AS
+SELECT
+    m.id_medicamento, m.nombre_comercial, m.stock_minimo,
+    COALESCE(SUM(l.stock_actual), 0) AS stock_total
+FROM medicamentos m
+LEFT JOIN lotes l ON l.id_medicamento = m.id_medicamento AND l.fecha_caducidad >= CURDATE()
+WHERE m.estatus = TRUE
+GROUP BY m.id_medicamento, m.nombre_comercial, m.stock_minimo
+HAVING COALESCE(SUM(l.stock_actual), 0) <= m.stock_minimo;
+
+-- Catálogo para el punto de venta: lotes vendibles ordenados por caducidad (FEFO)
+CREATE OR REPLACE VIEW v_lotes_disponibles AS
+SELECT l.id_lote, m.id_medicamento, m.codigo_barras, m.nombre_comercial,
+       m.precio_venta, l.num_lote, l.fecha_caducidad, l.stock_actual
+FROM lotes l
+JOIN medicamentos m ON m.id_medicamento = l.id_medicamento
+WHERE m.estatus = TRUE AND l.stock_actual > 0 AND l.fecha_caducidad >= CURDATE()
+ORDER BY l.fecha_caducidad ASC;
+
+-- ============================ DATOS MÍNIMOS =============================
+-- Roles necesarios para el sistema.
+INSERT IGNORE INTO roles (nombre_rol) VALUES ('Administrador'), ('Cajero');
+
+-- ============================ PERMISOS (recomendado) ====================
+-- La app no debería tener DELETE/UPDATE directo, solo lectura y ejecución:
+-- CREATE USER 'urb_app'@'%' IDENTIFIED BY 'CAMBIAR_CONTRASEÑA';
+-- GRANT SELECT, EXECUTE ON farmacias_urb.* TO 'urb_app'@'%';
+
+-- =========================================================================
+-- DATOS DE PRUEBA (se pueden borrar sin afectar el esquema)
+-- Re-ejecutable: usa INSERT IGNORE y las ventas solo se cargan si no hay ninguna.
+-- Las fechas de caducidad son relativas a CURDATE(), así las alertas siempre funcionan.
+-- IMPORTANTE: los password_hash son marcadores de posición; no sirven para iniciar sesión.
+-- Crea usuarios reales desde tu app o con sp_usuario_cambiar_password.
+-- =========================================================================
+
+-- Usuarios (1 administrador, 2 cajeros)
+INSERT IGNORE INTO usuarios (nombre, correo, password_hash, id_rol)
+SELECT 'Laura Mendoza Ríos', 'admin@farmaciasurb.com', '$2b$12$HASH_DE_PRUEBA_REEMPLAZAR_ADMIN', id_rol
+  FROM roles WHERE nombre_rol = 'Administrador';
+INSERT IGNORE INTO usuarios (nombre, correo, password_hash, id_rol)
+SELECT 'Pedro Sánchez Cruz', 'cajero1@farmaciasurb.com', '$2b$12$HASH_DE_PRUEBA_REEMPLAZAR_CAJ1', id_rol
+  FROM roles WHERE nombre_rol = 'Cajero';
+INSERT IGNORE INTO usuarios (nombre, correo, password_hash, id_rol)
+SELECT 'Marta Gómez Vega', 'cajero2@farmaciasurb.com', '$2b$12$HASH_DE_PRUEBA_REEMPLAZAR_CAJ2', id_rol
+  FROM roles WHERE nombre_rol = 'Cajero';
+
+-- Categorías
+INSERT IGNORE INTO categorias (nombre_categoria) VALUES
+    ('Analgésicos'), ('Antibióticos'), ('Antigripales y alergias'),
+    ('Gastrointestinales'), ('Vitaminas y suplementos'), ('Dermatológicos'),
+    ('Enfermedades crónicas'), ('Cuidado personal');
+
+-- Medicamentos (los dos últimos sirven para probar alertas y baja lógica)
+INSERT IGNORE INTO medicamentos
+    (codigo_barras, nombre_comercial, sustancia_activa, precio_venta, stock_minimo, id_categoria) VALUES
+('7501000100001', 'Paracetamol 500 mg c/20 tabletas',     'Paracetamol',               62.00, 10, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Analgésicos')),
+('7501000100002', 'Ibuprofeno 400 mg c/10 cápsulas',      'Ibuprofeno',                89.50, 10, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Analgésicos')),
+('7501000100003', 'Naproxeno 275 mg c/12 tabletas',       'Naproxeno sódico',         112.00,  8, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Analgésicos')),
+('7501000100004', 'Amoxicilina 500 mg c/12 cápsulas',     'Amoxicilina',              145.00,  8, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Antibióticos')),
+('7501000100005', 'Azitromicina 500 mg c/3 tabletas',     'Azitromicina',             210.00,  5, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Antibióticos')),
+('7501000100006', 'Loratadina 10 mg c/10 tabletas',       'Loratadina',                78.00,  8, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Antigripales y alergias')),
+('7501000100007', 'Dextrometorfano jarabe 120 ml',        'Dextrometorfano',           96.00,  6, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Antigripales y alergias')),
+('7501000100008', 'Omeprazol 20 mg c/14 cápsulas',        'Omeprazol',                 98.00,  8, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Gastrointestinales')),
+('7501000100009', 'Loperamida 2 mg c/12 tabletas',        'Loperamida',                54.00,  5, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Gastrointestinales')),
+('7501000100010', 'Vitamina C 1 g c/10 efervescentes',    'Ácido ascórbico',          135.00,  6, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Vitaminas y suplementos')),
+('7501000100011', 'Complejo B c/30 tabletas',             'Vitaminas del complejo B', 120.00,  5, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Vitaminas y suplementos')),
+('7501000100012', 'Hidrocortisona crema 1% 30 g',         'Hidrocortisona',            85.00,  5, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Dermatológicos')),
+('7501000100013', 'Metformina 850 mg c/30 tabletas',      'Metformina',               156.00,  8, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Enfermedades crónicas')),
+('7501000100014', 'Alcohol etílico 70% 250 ml',           'Alcohol etílico',           35.00, 10, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Cuidado personal')),
+('7501000100015', 'Diclofenaco 100 mg c/10 tabletas',     'Diclofenaco',              118.00,  5, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Analgésicos')),
+('7501000100016', 'Jarabe descontinuado 100 ml',          'Sustancia de prueba',       50.00,  5, (SELECT id_categoria FROM categorias WHERE nombre_categoria = 'Cuidado personal'));
+
+-- Medicamento 16 = dado de baja (para probar el filtro de estatus)
+UPDATE medicamentos SET estatus = FALSE WHERE codigo_barras = '7501000100016';
+-- Medicamento 15 (Diclofenaco) queda SIN lotes a propósito: debe salir en stock crítico.
+
+-- Lotes
+INSERT IGNORE INTO lotes (id_medicamento, num_lote, fecha_caducidad, stock_actual) VALUES
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100001'), 'L-PAR-2501', DATE_ADD(CURDATE(), INTERVAL 14 MONTH), 60),
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100001'), 'L-PAR-2502', DATE_ADD(CURDATE(), INTERVAL 20 MONTH), 40),
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100002'), 'L-IBU-2501', DATE_ADD(CURDATE(), INTERVAL 10 MONTH), 45),
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100003'), 'L-NAP-2501', DATE_ADD(CURDATE(), INTERVAL 8 MONTH),  30),
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100004'), 'L-AMX-2501', DATE_ADD(CURDATE(), INTERVAL 45 DAY),   12),  -- por caducar
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100004'), 'L-AMX-2502', DATE_ADD(CURDATE(), INTERVAL 14 MONTH), 25),
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100005'), 'L-AZI-2501', DATE_ADD(CURDATE(), INTERVAL 12 MONTH),  4),  -- stock crítico
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100006'), 'L-LOR-2501', DATE_ADD(CURDATE(), INTERVAL 16 MONTH), 50),
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100007'), 'L-DEX-2501', DATE_ADD(CURDATE(), INTERVAL 7 MONTH),  20),
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100008'), 'L-OME-2501', DATE_ADD(CURDATE(), INTERVAL 11 MONTH), 35),
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100009'), 'L-LOP-2401', DATE_ADD(CURDATE(), INTERVAL -20 DAY),   8),  -- CADUCADO
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100009'), 'L-LOP-2502', DATE_ADD(CURDATE(), INTERVAL 9 MONTH),   3),  -- stock crítico
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100010'), 'L-VTC-2501', DATE_ADD(CURDATE(), INTERVAL 25 DAY),   15),  -- por caducar
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100010'), 'L-VTC-2502', DATE_ADD(CURDATE(), INTERVAL 13 MONTH), 40),
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100011'), 'L-VCB-2501', DATE_ADD(CURDATE(), INTERVAL 18 MONTH), 22),
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100012'), 'L-HID-2501', DATE_ADD(CURDATE(), INTERVAL 15 MONTH), 18),
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100013'), 'L-MET-2501', DATE_ADD(CURDATE(), INTERVAL 22 MONTH), 40),
+((SELECT id_medicamento FROM medicamentos WHERE codigo_barras = '7501000100014'), 'L-ALC-2501', DATE_ADD(CURDATE(), INTERVAL 30 MONTH), 70);
+
+-- Clientes
+INSERT IGNORE INTO clientes (nombre, telefono, correo) VALUES
+('María Fernanda López',  '5512345601', 'maria.lopez@ejemplo.com'),
+('Carlos Hernández Paz',  '5512345602', 'carlos.hernandez@ejemplo.com'),
+('Ana Sofía Ramírez',     '5512345603', 'ana.ramirez@ejemplo.com'),
+('Jorge Luis Martínez',   '5512345604', 'jorge.martinez@ejemplo.com'),
+('Daniela Torres Ochoa',  '5512345605', 'daniela.torres@ejemplo.com');
+
+-- Ventas de prueba: se registran con el procedimiento real (prueban triggers, puntos y cancelación)
+DELIMITER $$
+
+DROP PROCEDURE IF EXISTS sp_seed_ventas_prueba$$
+CREATE PROCEDURE sp_seed_ventas_prueba()
+BEGIN
+    DECLARE v_caj1, v_caj2, v_cli1, v_cli2, v_cli3, v_cancelar INT;
+    DECLARE l_par, l_ibu, l_lor, l_ome, l_amx2, l_met, l_alc, l_vtc2 INT;
+
+    IF (SELECT COUNT(*) FROM ventas) > 0 THEN
+        SELECT 'Ya existen ventas: se omite la carga de ventas de prueba' AS aviso;
+    ELSE
+        SELECT id_usuario INTO v_caj1 FROM usuarios WHERE correo = 'cajero1@farmaciasurb.com';
+        SELECT id_usuario INTO v_caj2 FROM usuarios WHERE correo = 'cajero2@farmaciasurb.com';
+        SELECT id_cliente INTO v_cli1 FROM clientes WHERE telefono = '5512345601';
+        SELECT id_cliente INTO v_cli2 FROM clientes WHERE telefono = '5512345602';
+        SELECT id_cliente INTO v_cli3 FROM clientes WHERE telefono = '5512345603';
+
+        SELECT id_lote INTO l_par  FROM lotes WHERE num_lote = 'L-PAR-2501';
+        SELECT id_lote INTO l_ibu  FROM lotes WHERE num_lote = 'L-IBU-2501';
+        SELECT id_lote INTO l_lor  FROM lotes WHERE num_lote = 'L-LOR-2501';
+        SELECT id_lote INTO l_ome  FROM lotes WHERE num_lote = 'L-OME-2501';
+        SELECT id_lote INTO l_amx2 FROM lotes WHERE num_lote = 'L-AMX-2502';
+        SELECT id_lote INTO l_met  FROM lotes WHERE num_lote = 'L-MET-2501';
+        SELECT id_lote INTO l_alc  FROM lotes WHERE num_lote = 'L-ALC-2501';
+        SELECT id_lote INTO l_vtc2 FROM lotes WHERE num_lote = 'L-VTC-2502';
+
+        -- V1: efectivo, cliente con puntos, IVA 0%  -> total 213.50
+        CALL sp_registrar_venta(v_caj1, v_cli1, 'EFECTIVO', 0.00, JSON_ARRAY(
+            JSON_OBJECT('id_lote', l_par, 'cantidad', 2),
+            JSON_OBJECT('id_lote', l_ibu, 'cantidad', 1)));
+
+        -- V2: tarjeta, mostrador (sin cliente) -> total 274.00
+        CALL sp_registrar_venta(v_caj1, NULL, 'TARJETA', 0.00, JSON_ARRAY(
+            JSON_OBJECT('id_lote', l_lor, 'cantidad', 1),
+            JSON_OBJECT('id_lote', l_ome, 'cantidad', 2)));
+
+        -- V3: con IVA 16% (cuidado personal / suplementos) -> total 237.80
+        CALL sp_registrar_venta(v_caj2, v_cli2, 'TARJETA', 0.16, JSON_ARRAY(
+            JSON_OBJECT('id_lote', l_alc,  'cantidad', 2),
+            JSON_OBJECT('id_lote', l_vtc2, 'cantidad', 1)));
+
+        -- V4: transferencia -> total 301.00
+        CALL sp_registrar_venta(v_caj2, v_cli3, 'TRANSFERENCIA', 0.00, JSON_ARRAY(
+            JSON_OBJECT('id_lote', l_amx2, 'cantidad', 1),
+            JSON_OBJECT('id_lote', l_met,  'cantidad', 1)));
+
+        -- V5: se registra y se cancela (stock y puntos deben regresar)
+        CALL sp_registrar_venta(v_caj1, v_cli1, 'EFECTIVO', 0.00, JSON_ARRAY(
+            JSON_OBJECT('id_lote', l_par, 'cantidad', 5)));
+        SELECT MAX(id_venta) INTO v_cancelar FROM ventas;
+        CALL sp_cancelar_venta(v_cancelar);
+    END IF;
+END$$
+
+DELIMITER ;
+
+CALL sp_seed_ventas_prueba();
+DROP PROCEDURE IF EXISTS sp_seed_ventas_prueba;
+
+-- =========================================================================
+-- CONSULTAS DE VERIFICACIÓN (ejecútalas y compara con lo esperado)
+-- =========================================================================
+-- Esperado: Amoxicilina L-AMX-2501 (45 d), Vitamina C L-VTC-2501 (25 d), Loperamida L-LOP-2401 CADUCADO
+SELECT * FROM v_alerta_caducidad ORDER BY dias_restantes;
+
+-- Esperado: Azitromicina (4), Loperamida (3 vigentes), Diclofenaco (0, sin lotes)
+SELECT * FROM v_alerta_stock_critico;
+
+-- Esperado: sin lotes caducados ni productos inactivos; ordenado por caducidad (FEFO)
+SELECT * FROM v_lotes_disponibles;
+
+-- Esperado: 5 ventas, la última CANCELADA; totales 213.50 / 274.00 / 237.80 / 301.00 / 310.00
+SELECT id_venta, folio_ticket, subtotal, iva, total, metodo_pago, puntos_generados, estatus_venta FROM ventas;
+
+-- Esperado: María 21 pts (la venta cancelada no suma), Carlos 23, Ana 30, los demás 0
+SELECT nombre, puntos_acumulados FROM clientes;
+
+-- Esperado: L-PAR-2501 = 58 (la cancelación devolvió 5 unidades)
+SELECT num_lote, stock_actual FROM lotes WHERE num_lote IN ('L-PAR-2501','L-AMX-2502','L-MET-2501');
+
+-- Pruebas de error (descomenta una a una; cada una debe fallar con mensaje claro):
+-- CALL sp_registrar_venta(2, NULL, 'EFECTIVO', 0, '[{"id_lote":1,"cantidad":9999}]');   -- Stock insuficiente
+-- CALL sp_registrar_venta(2, NULL, 'EFECTIVO', 0, JSON_ARRAY(JSON_OBJECT('id_lote',(SELECT id_lote FROM lotes WHERE num_lote='L-LOP-2401'),'cantidad',1)));  -- Lote caducado
+-- CALL sp_cliente_crear('Duplicado', '5512345601', 'otro@ejemplo.com');                  -- Teléfono duplicado
+-- CALL sp_categoria_eliminar(1);                                                         -- Tiene medicamentos
