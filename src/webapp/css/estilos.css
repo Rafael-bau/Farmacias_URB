@@ -1,0 +1,182 @@
+/* ===================================================================
+   Farmacias URB - estilos (sobre Bootstrap 5). Basado en los mockups.
+   =================================================================== */
+:root {
+    --azul-barra: #6389c9;
+    --azul-th: #a3b6e3;
+    --fila-1: #bcd0ec;
+    --fila-2: #e6ecf8;
+    --item-activo: #c9d1dc;
+    --cian: #00aeff;
+    --rojo: #b0463a;
+    --rojo-icono: #8a0000;
+    --naranja: #ec8421;
+    --naranja-icono: #b24a12;
+    --borde: #d9dde3;
+}
+
+* { box-sizing: border-box; }
+body { font-family: 'Alike', Georgia, 'Times New Roman', serif; color: #111; background: #fff; margin: 0; }
+a { color: inherit; }
+
+/* ---------- Barra superior ---------- */
+.barra-superior {
+    background: var(--azul-barra); color: #fff; height: 76px; padding: 0 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 30;
+}
+.marca { font-size: 2.5rem; color: #fff; text-decoration: none; letter-spacing: .5px; line-height: 1; }
+.usuario-barra { position: relative; }
+.usuario-barra summary { list-style: none; display: flex; align-items: center; gap: 14px; cursor: pointer; font-size: 1.2rem; }
+.usuario-barra summary::-webkit-details-marker { display: none; }
+.avatar {
+    width: 52px; height: 52px; border-radius: 50%; border: 3px solid #fff; background: #c6ccd6;
+    display: flex; align-items: center; justify-content: center; color: #fff; font-size: 1.9rem; overflow: hidden;
+}
+.menu-usuario {
+    position: absolute; right: 0; top: 64px; background: #fff; color: #111; min-width: 220px;
+    border: 1px solid var(--borde); border-radius: 14px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 8px 0;
+}
+.menu-usuario .rol { display: block; padding: 6px 18px 10px; color: #6b7280; font-size: .85rem; border-bottom: 1px solid var(--borde); }
+.menu-usuario a { display: block; padding: 10px 18px; text-decoration: none; }
+.menu-usuario a:hover { background: var(--fila-2); }
+
+/* ---------- Estructura ---------- */
+.contenedor-app { display: flex; min-height: calc(100vh - 76px); }
+.menu-lateral {
+    width: 263px; flex: 0 0 263px; background: #fff; border-right: 1px solid var(--borde);
+    border-bottom-right-radius: 40px; padding-bottom: 30px;
+}
+.menu-lateral a.item {
+    display: flex; align-items: center; gap: 18px; padding: 14px 16px; color: #000;
+    text-decoration: none; font-size: 1.12rem;
+}
+.menu-lateral a.item i { font-size: 1.8rem; width: 38px; text-align: center; }
+.menu-lateral a.item.activo { background: var(--item-activo); }
+.menu-lateral a.item:hover { background: #eef1f5; }
+.menu-lateral a.item.activo:hover { background: var(--item-activo); }
+.menu-lateral a.sub { display: block; padding: 6px 0 6px 72px; text-decoration: none; font-size: 1.08rem; }
+.menu-lateral a.sub:hover, .menu-lateral a.sub.activo { color: #2f6fd6; }
+.menu-lateral a.sub.activo { font-weight: bold; }
+
+.contenido { flex: 1; min-width: 0; padding: 18px 28px 40px; }
+.titulo-seccion { color: var(--cian); font-size: 1.4rem; font-weight: 400; margin: 0 0 18px; }
+.subtitulo { font-size: 1.3rem; font-weight: 400; margin: 28px 0 8px; }
+
+/* ---------- Tarjetas de alerta (Inicio) ---------- */
+.alerta-card {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #fff;
+    text-decoration: none; border-radius: 44px; padding: 14px 34px 14px 22px; min-height: 124px; font-size: 1.35rem;
+}
+.alerta-card:hover { color: #fff; filter: brightness(1.06); }
+.alerta-card i { font-size: 5rem; line-height: 1; }
+.alerta-caducidad { background: var(--rojo); }
+.alerta-caducidad i { color: var(--rojo-icono); }
+.alerta-stock { background: var(--naranja); }
+.alerta-stock i { color: var(--naranja-icono); }
+.alerta-card .contador {
+    display: inline-block; min-width: 38px; text-align: center; background: rgba(255,255,255,.25);
+    border-radius: 20px; padding: 0 10px; margin-left: 8px;
+}
+
+/* ---------- Tablas por bloques de color ---------- */
+.tabla-responsive { overflow-x: auto; }
+.tabla-urb { width: 100%; border-collapse: separate; border-spacing: 10px 10px; margin: -10px; width: calc(100% + 20px); }
+.tabla-urb th {
+    background: var(--azul-th); color: #fff; font-weight: 400; text-align: center; padding: 18px 10px; font-size: 1.15rem;
+}
+.tabla-urb td { background: var(--fila-2); padding: 14px 12px; vertical-align: middle; }
+.tabla-urb td:first-child { background: var(--fila-1); }
+.tabla-urb tr.fila-caducado td { background: #e9806a; color: #fff; }
+.tabla-urb tr.fila-caducado td:first-child { background: #c4503b; }
+.tabla-urb tr.fila-alerta td { background: #eda26a; }
+.tabla-urb tr.fila-alerta td:first-child { background: #e17b47; color: #fff; }
+.tabla-urb tr.fila-inactiva td { opacity: .55; }
+.tabla-urb .vacio { text-align: center; background: var(--fila-2); }
+
+/* ---------- Formularios y paneles ---------- */
+.panel-form { border: 2px solid #d9d9d9; border-radius: 22px; margin-bottom: 22px; background: #fff; }
+.panel-form > summary { padding: 14px 22px; cursor: pointer; font-size: 1.15rem; list-style: none; }
+.panel-form > summary::-webkit-details-marker { display: none; }
+.panel-form[open] > summary { border-bottom: 1px solid #e5e5e5; }
+.form-label { margin-bottom: 4px; font-size: .95rem; }
+.form-control, .form-select { border: 2px solid #dcdcdc; border-radius: 12px; }
+.btn-urb { background: #2f80e4; color: #fff; border: 0; border-radius: 12px; padding: 8px 22px; }
+.btn-urb:hover { background: #2569bd; color: #fff; }
+.btn-chico { padding: 3px 12px; border-radius: 10px; font-size: .9rem; }
+.barra-filtros { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 18px; }
+.barra-filtros .btn { border-radius: 20px; }
+
+/* ---------- Estados (insignias) ---------- */
+.insignia { display: inline-block; padding: 2px 12px; border-radius: 14px; font-size: .85rem; background: #e5e7eb; }
+.insignia.ok { background: #cfeedd; color: #14532d; }
+.insignia.alerta { background: #ffe1b8; color: #7a3b00; }
+.insignia.peligro { background: #ffc9c0; color: #7f1d1d; }
+
+/* ---------- Tarjetas (catálogo / compras / novedades) ---------- */
+.tarjeta-urb {
+    border: 3px solid #d9d9d9; border-radius: 32px; padding: 22px; background: #fff; height: 100%;
+    min-height: 200px; display: flex; flex-direction: column; gap: 4px;
+}
+.tarjeta-urb h3 { font-size: 1.2rem; margin: 0; }
+.tarjeta-urb .precio { font-size: 1.5rem; color: #2f6fd6; margin-top: auto; }
+.tarjeta-urb .icono-grande { font-size: 2.4rem; color: var(--azul-barra); }
+
+.banner {
+    height: 210px; margin: -18px -28px 18px; display: flex; align-items: center; justify-content: center;
+    color: #f3eee4; font-size: 4rem; position: relative; overflow: hidden;
+    background: linear-gradient(110deg, #b693a8 0%, #7c93d0 40%, #2a4fa8 70%, #d99a72 100%);
+}
+.banner::before, .banner::after { content: ""; position: absolute; border-radius: 60px; opacity: .45; background: rgba(255,255,255,.55); }
+.banner::before { width: 210px; height: 74px; left: 9%; top: 28px; transform: rotate(-28deg); }
+.banner::after { width: 170px; height: 62px; right: 8%; bottom: 22px; transform: rotate(32deg); }
+.banner span { position: relative; z-index: 1; text-shadow: 0 2px 8px rgba(0,0,0,.25); }
+
+/* ---------- Carrito (punto de venta) ---------- */
+.panel-carrito { border: 3px solid #d9d9d9; border-radius: 28px; padding: 20px; background: #fff; position: sticky; top: 92px; }
+.total-linea { display: flex; justify-content: space-between; font-size: 1.05rem; }
+.total-linea.grande { font-size: 1.5rem; border-top: 2px solid #e5e5e5; margin-top: 8px; padding-top: 8px; }
+.entrada-cantidad { width: 74px; }
+
+/* ---------- Login ---------- */
+.login-fondo {
+    min-height: 100vh; margin: 0; display: flex; flex-direction: column; align-items: center; padding: 40px 16px;
+    background: radial-gradient(circle at 50% 45%, #03357a 0%, #001448 55%, #00092f 100%);
+}
+.login-titulo { color: #fff; font-size: 3.4rem; font-weight: 400; margin: 0 0 28px; text-align: center; }
+.login-card {
+    background: #fff; border: 2px solid #d5d5d5; border-radius: 34px; width: min(94vw, 520px);
+    padding: 20px 22px 30px;
+}
+.login-card h2 { text-align: center; font-weight: 400; font-size: 2rem; margin: 0 0 22px; }
+.login-card input {
+    width: 100%; height: 64px; border: 3px solid #dcdcdc; border-radius: 16px; padding: 0 22px;
+    font-size: 1.3rem; margin-bottom: 26px; font-family: inherit;
+}
+.login-card input:focus { outline: none; border-color: #2f80e4; }
+.btn-login {
+    width: 100%; height: 64px; border: 0; border-radius: 14px; background: #2f80e4; color: #fff;
+    font-size: 1.5rem; font-family: inherit; cursor: pointer;
+}
+.btn-login:hover { background: #2569bd; }
+
+/* ---------- Pantalla de error ---------- */
+.pagina-error { text-align: center; padding: 80px 16px; }
+.pagina-error h1 { font-size: 5rem; color: var(--azul-barra); }
+
+/* ---------- Responsivo ---------- */
+@media (max-width: 991px) {
+    .marca { font-size: 1.8rem; }
+    .contenedor-app { flex-direction: column; }
+    .menu-lateral {
+        width: 100%; flex: none; display: flex; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--borde);
+        border-radius: 0; padding-bottom: 0;
+    }
+    .menu-lateral a.item { padding: 10px 14px; gap: 8px; font-size: 1rem; }
+    .menu-lateral a.item i { font-size: 1.3rem; width: auto; }
+    .menu-lateral a.sub { padding: 10px 14px; }
+    .contenido { padding: 14px 14px 30px; }
+    .banner { margin: -14px -14px 14px; font-size: 2.4rem; height: 150px; }
+    .login-titulo { font-size: 2.4rem; }
+    .panel-carrito { position: static; }
+}
