@@ -1,0 +1,74 @@
+<%@ page import="org.TecNova.model.Usuario" %>
+<%@ page import="org.Tecnova.util.Formato" %>
+<%
+    Usuario usuarioSesion = (Usuario) session.getAttribute( "usuario" );
+    String rolSesion = usuarioSesion == null ? "" : usuarioSesion.getRol( ).getNombre( );
+    boolean esAdmin = "Administrador".equals( rolSesion );
+    boolean esCajero = "Cajero".equals( rolSesion );
+    String ctx = request.getContextPath( );
+    String flashMensaje = (String) session.getAttribute( "flashMensaje" );
+    String flashTipo = (String) session.getAttribute( "flashTipo" );
+    session.removeAttribute( "flashMensaje" );
+    session.removeAttribute( "flashTipo" );
+%>
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><%= Formato.esc( titulo ) %> · Farmacias URB</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Alike&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="<%= ctx %>/css/estilos.css">
+</head>
+<body>
+
+<header class="barra-superior">
+    <a class="marca" href="<%= ctx %>/index.jsp">Farmacias URB</a>
+    <details class="usuario-barra">
+        <summary>
+            <span><%= Formato.esc( usuarioSesion.getNombre( ) ) %></span>
+            <span class="avatar"><i class="bi bi-person-fill"></i></span>
+        </summary>
+        <div class="menu-usuario">
+            <span class="rol"><%= Formato.esc( rolSesion ) %> · <%= Formato.esc( usuarioSesion.getCorreo( ) ) %></span>
+            <a href="<%= ctx %>/Configuracion.jsp"><i class="bi bi-gear"></i> Mi cuenta</a>
+            <a href="<%= ctx %>/LogoutServlet"><i class="bi bi-box-arrow-right"></i> Cerrar sesión</a>
+        </div>
+    </details>
+</header>
+
+<div class="contenedor-app">
+    <nav class="menu-lateral">
+        <a class="item <%= Formato.activo( activo, "inicio" ) %>" href="<%= ctx %>/index.jsp"><i class="bi bi-house-door-fill"></i><span>Inicio</span></a>
+        <% if( esAdmin ) { %>
+        <a class="item <%= Formato.activo( activo, "inventario" ) %>" href="<%= ctx %>/Inventario.jsp"><i class="bi bi-box-seam"></i><span>Inventario</span></a>
+        <a class="item <%= Formato.activo( activo, "entradas" ) %>" href="<%= ctx %>/Entradas.jsp"><i class="bi bi-truck"></i><span>Entradas</span></a>
+        <a class="item <%= Formato.activo( activo, "salidas" ) %>" href="<%= ctx %>/Salidas.jsp"><i class="bi bi-clipboard2-check-fill"></i><span>Salidas</span></a>
+        <a class="item <%= Formato.activo( activo, "almacen" ) %>" href="<%= ctx %>/Almacen.jsp"><i class="bi bi-capsule"></i><span>Almacén</span></a>
+        <a class="item <%= Formato.activo( activo, "ventas" ) %>" href="<%= ctx %>/Ventas.jsp"><i class="bi bi-graph-up-arrow"></i><span>Ventas</span></a>
+        <a class="item <%= Formato.activo( activo, "configuracion" ) %>" href="<%= ctx %>/Configuracion.jsp"><i class="bi bi-gear-fill"></i><span>Configuración</span></a>
+        <a class="sub <%= Formato.activo( activo, "usuarios" ) %>" href="<%= ctx %>/Usuarios.jsp">Usuarios</a>
+        <a class="sub <%= Formato.activo( activo, "proveedores" ) %>" href="<%= ctx %>/Proveedores.jsp">Proveedores</a>
+        <a class="sub <%= Formato.activo( activo, "productos" ) %>" href="<%= ctx %>/Medicamentos.jsp">Productos</a>
+        <a class="sub <%= Formato.activo( activo, "clientes" ) %>" href="<%= ctx %>/Clientes.jsp">Clientes</a>
+        <% } else if( esCajero ) { %>
+        <a class="item <%= Formato.activo( activo, "inventario" ) %>" href="<%= ctx %>/Inventario.jsp"><i class="bi bi-box-seam"></i><span>Inventario</span></a>
+        <a class="item <%= Formato.activo( activo, "pos" ) %>" href="<%= ctx %>/Pos.jsp"><i class="bi bi-cart-fill"></i><span>Compras</span></a>
+        <a class="item <%= Formato.activo( activo, "catalogos" ) %>" href="<%= ctx %>/Catalogos.jsp"><i class="bi bi-journals"></i><span>Catálogos</span></a>
+        <a class="item <%= Formato.activo( activo, "almacen" ) %>" href="<%= ctx %>/Almacen.jsp"><i class="bi bi-capsule"></i><span>Almacén</span></a>
+        <a class="item <%= Formato.activo( activo, "ventas" ) %>" href="<%= ctx %>/Ventas.jsp"><i class="bi bi-graph-up-arrow"></i><span>Ventas</span></a>
+        <a class="item <%= Formato.activo( activo, "configuracion" ) %>" href="<%= ctx %>/Configuracion.jsp"><i class="bi bi-gear-fill"></i><span>Configuración</span></a>
+        <% } else { %>
+        <a class="item <%= Formato.activo( activo, "compras" ) %>" href="<%= ctx %>/MisCompras.jsp"><i class="bi bi-cart-fill"></i><span>Compras</span></a>
+        <a class="item <%= Formato.activo( activo, "catalogos" ) %>" href="<%= ctx %>/Catalogos.jsp"><i class="bi bi-journals"></i><span>Catálogos</span></a>
+        <a class="item <%= Formato.activo( activo, "configuracion" ) %>" href="<%= ctx %>/Configuracion.jsp"><i class="bi bi-gear-fill"></i><span>Configuración</span></a>
+        <% } %>
+    </nav>
+
+    <main class="contenido">
+        <% if( flashMensaje != null ) { %>
+        <div class="alert alert-<%= Formato.esc( flashTipo == null ? "info" : flashTipo ) %>" role="alert"><%= Formato.esc( flashMensaje ) %></div>
+        <% } %>
