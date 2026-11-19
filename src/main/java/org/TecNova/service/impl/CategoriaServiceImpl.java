@@ -47,7 +47,7 @@ public class CategoriaServiceImpl implements CategoriaService
     {
         if( entity.getNombre( ) == null || entity.getNombre( ).isBlank( ) || entity.getNombre( ).length( ) > 50 )
         {
-            throw new IllegalArgumentException( "El nombre de la categoría es obligatorio (máximo 50 caracteres)." );
+            throw new IllegalArgumentException( "El nombre de la categoría es obligatorio(máximo 50 caracteres)." );
         }
         entity.setNombre( entity.getNombre( ).trim( ) );
     }
