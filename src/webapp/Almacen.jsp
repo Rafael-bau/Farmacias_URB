@@ -11,6 +11,7 @@
     String q = request.getParameter( "q" ) == null ? "" : request.getParameter( "q" ).trim( );
     ReporteService reporteService = new ReporteServiceImpl( );
     List<Map<String, Object>> items = reporteService.almacen( filtro, q );
+    //gerdoc
 %>
 <h1 class="titulo-seccion">Almacén</h1>
 
