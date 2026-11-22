@@ -22,7 +22,7 @@ public class HibernateUtil
             Configuration configuration = new Configuration( ).configure( "hibernate.cfg.xml" );
             sobrescribir( configuration, "hibernate.connection.url", "jdbc:mysql://127.0.0.1:3306/farmacias_urb?useSSL=false&amp;allowPublicKeyRetrieval=true&amp;serverTimezone=America/Mexico_City&amp;characterEncoding=UTF-8" );
             sobrescribir( configuration, "hibernate.connection.username", "root" );
-            sobrescribir( configuration, "hibernate.connection.password", "rafael2" );
+            sobrescribir( configuration, "hibernate.connection.password", "1234" );
             return configuration.buildSessionFactory( );
         }
         catch( Throwable e )
