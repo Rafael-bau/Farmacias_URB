@@ -1,0 +1,17 @@
+# Maven / IntelliJ / Eclipse / NetBeans / VS Code
+target/
+out/
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+nbproject/private/
+.vscode/
+# Tomcat local (Smart Tomcat) y sistema
+.smarttomcat/
+work/
+temp/
+logs/
+.DS_Store
+__MACOSX/
